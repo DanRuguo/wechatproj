@@ -1,4 +1,9 @@
 记事本打开.config
-按照id、token、姓名的顺序，一行为一单位输入专员信息，中间用空格隔开。
-记事本打开.timseset
-在【】内按照提示输入信息，"//"代表不启用。若时间预设都不启用，程序只会在点击"启动"按钮后执行一次。
+
+{
+    "userid": "1142",
+    "token": "2022-09-29 11:42:59",
+    "url": "https://crm.xinlanrenli.com/xsdrec-recruit-api",
+    "timetype": 2,
+    "times": "17:00;00:12"
+}
