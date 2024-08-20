@@ -15,6 +15,9 @@ import pytz
 from datetime import datetime, timedelta
 from PIL import Image, ImageTk, ImageFont
 import tkinter.font as tkFont
+from tkinter import Toplevel
+from pystray import Icon, MenuItem, Menu
+from PIL import Image, ImageDraw
 
 # 设置东八区时区
 tz = pytz.timezone('Asia/Shanghai')
@@ -24,15 +27,140 @@ processed_files = []
 result_files = []
 user_params = []
 timers = []
+nickname = []
 next_run_time_label = None
 next_next_run_time_label = None
 
+def resource_path(relative_path):
+    """获取资源文件的路径"""
+    try:
+        # PyInstaller 创建临时文件时
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
+
+icon_path = resource_path("favicon.ico")
+
+def load_font(font_path, size, weight=tkFont.NORMAL):
+    """加载字体"""
+    pil_font = ImageFont.truetype(resource_path(font_path), size)
+    return tkFont.Font(family=pil_font.getname(), size=size, weight=weight)
+
 def on_closing():
-    """在关闭窗口时清理资源并退出程序"""
-    for timer in timers:
-        timer.cancel()
-    root.destroy()
-    sys.exit()
+    """在关闭窗口时弹出提示框进行确认"""
+    show_exit_confirmation_dialog()
+
+def show_exit_confirmation_dialog():
+    """弹出确认退出对话框"""
+    dialog = Toplevel(root)
+    dialog.title("确认退出")
+    dialog.resizable(False, False)
+
+    # 设置对话框左上角的图标
+    dialog.iconbitmap(icon_path)
+
+    # 使用动态加载的字体
+    stzhongs_font_b = load_font("STZHONGS.TTF", 12, tkFont.BOLD)
+    stzhongs_font = load_font("STZHONGS.TTF", 12)
+    simhei_font_b = load_font("simhei.ttf", 12, tkFont.BOLD)
+    msyh_font = load_font("msyh.ttc", 12)
+
+    # 模拟标题栏的 Label
+    title_label = Label(dialog, text="您刚刚点击了退出按钮，请问：", font=stzhongs_font)
+    title_label.pack(pady=(10, 0))
+
+    message = Label(dialog, text="是否要退出？", font=stzhongs_font_b)
+    message.pack(pady=20)
+
+    def confirm_exit():
+        """退出程序"""
+        dialog.destroy()
+        for timer in timers:
+            timer.cancel()
+        root.destroy()
+        sys.exit()
+
+    def minimize_to_tray():
+        """最小化到系统托盘"""
+        dialog.destroy()
+        root.withdraw()  # 隐藏主窗口
+        create_tray_icon()
+
+    def cancel_action():
+        """取消退出"""
+        dialog.destroy()
+
+    # 创建一个 frame 来容纳按钮
+    button_frame = tk.Frame(dialog)
+    button_frame.pack(pady=10)
+
+    # 确认按钮
+    confirm_button = Button(button_frame, text="确定", command=confirm_exit, width=10, font=simhei_font_b, bg='red', fg='white')
+    confirm_button.grid(row=0, column=0, padx=5)
+
+    # 最小化按钮
+    minimize_button = Button(button_frame, text="最小化", command=minimize_to_tray, width=10, font=simhei_font_b, bg='orange', fg='black')
+    minimize_button.grid(row=0, column=1, padx=5)
+
+    # 取消按钮
+    cancel_button = Button(button_frame, text="取消", command=cancel_action, width=10, font=msyh_font, bg='blue', fg='white')
+    cancel_button.grid(row=0, column=2, padx=5)
+
+    # 自动调整对话框大小以适应内容
+    dialog.update_idletasks()
+
+    # 获取对话框的宽度和高度
+    width = dialog.winfo_reqwidth()
+    height = dialog.winfo_reqheight()
+
+    # 获取屏幕的宽度和高度
+    screenwidth = dialog.winfo_screenwidth()
+    screenheight = dialog.winfo_screenheight()
+
+    # 计算对话框左上角的x和y位置，使其居中
+    position_x = int((screenwidth / 2) - (width / 2))
+    position_y = int((screenheight / 2) - (height / 2))
+
+    # 设置对话框的显示位置
+    dialog.geometry(f"{width}x{height}+{position_x}+{position_y}")
+    dialog.resizable(False, False)
+
+def create_image(width, height, color1, color2):
+    """创建托盘图标的图像"""
+    image = Image.new('RGB', (width, height), color1)
+    dc = ImageDraw.Draw(image)
+    dc.rectangle(
+        (width // 2, 0, width, height // 2),
+        fill=color2)
+    dc.rectangle(
+        (0, height // 2, width // 2, height),
+        fill=color2)
+    return image
+
+def create_tray_icon():
+    """创建托盘图标"""
+    icon_image = Image.open(icon_path)  # 使用嵌入的 icon 文件作为托盘图标
+
+    # 检查并调整图标尺寸为 64x64 像素（pystray 一般推荐此尺寸）
+    icon_image = icon_image.resize((64, 64), Image.LANCZOS)
+
+    icon = Icon("CRM微信端开发", icon_image, menu=Menu(
+        MenuItem('恢复窗口', restore_window),
+        MenuItem('退出程序', quit_app)
+    ))
+    icon.run_detached()
+
+def restore_window(icon, item):
+    """从托盘恢复窗口"""
+    root.deiconify()
+    icon.stop()
+
+def quit_app(icon, item):
+    """退出应用程序"""
+    icon.stop()
+    on_closing()
 
 def load_time_settings():
     global timers, user_params
@@ -62,12 +190,18 @@ def load_time_settings():
 
             elif timetype == 0:
                 # 无定时任务，仅在启动时执行一次
-                continue
+                scheduled_operations()
+                continue  # 跳过后续的 autorun 检查
 
-        # 立即执行一次任务
-        scheduled_operations()
+            # 检查 autorun 字段
+            if user.get("autorun", False):
+                scheduled_operations()  # 如果 autorun 为 True，则立即执行任务
+
     except Exception as e:
-        messagebox.showerror("错误", f"读取定时设置时发生错误：{e}")
+        if e.winerror == 1400:  # 检测是否是1400错误
+            messagebox.showerror("错误", "请您先登录当前专员工作微信号，并保持微信打开。")
+        else:
+            messagebox.showerror("错误", f"读取定时设置时发生错误：{e}")
 
 def schedule_fixed_times(times):
     global timers
@@ -165,6 +299,7 @@ def load_users_config():
             "token": config_data["token"],
             "url": config_data["url"],
             "ip": get_ip_address(),
+            "autorun": config_data.get("autorun", False),  # 获取 autorun 字段，默认为 False
             "timetype": config_data["timetype"],
             "times": config_data["times"]
         }
@@ -247,26 +382,16 @@ def run_requests():
         # 如果有任何错误或者文件缺失
         messagebox.showinfo("结果", response_messages, parent=root)
 
-def resource_path(relative_path):
-    """获取资源文件的路径"""
-    try:
-        # PyInstaller 创建临时文件时
-        base_path = sys._MEIPASS
-    except Exception:
-        base_path = os.path.abspath(".")
-
-    return os.path.join(base_path, relative_path)
-
-def load_font(font_path, size, weight=tkFont.NORMAL):
-    """加载字体"""
-    pil_font = ImageFont.truetype(resource_path(font_path), size)
-    return tkFont.Font(family=pil_font.getname(), size=size, weight=weight)
-
 def setup_ui(root):
     global next_run_time_label, next_next_run_time_label
 
-    icon_path = resource_path("favicon.ico")
     root.iconbitmap(icon_path)
+
+    # 动态加载字体
+    stzhongs_font_b = load_font("STZHONGS.TTF", 14, tkFont.BOLD)
+    stzhongs_font = load_font("STZHONGS.TTF", 12)
+    simhei_font_b = load_font("simhei.ttf", 16, tkFont.BOLD)
+    msyh_font = load_font("msyh.ttc", 10)
 
     # 使用 Label 来显示背景图片
     bg_image_path = resource_path("background.jpg")
@@ -277,12 +402,6 @@ def setup_ui(root):
     bg_label = Label(root, image=bg_image)
     bg_label.image = bg_image  # 保持对图片的引用
     bg_label.place(x=0, y=0, relwidth=1, relheight=1)
-
-    # 动态加载字体
-    stzhongs_font_b = load_font("STZHONGS.TTF", 14, tkFont.BOLD)
-    stzhongs_font = load_font("STZHONGS.TTF", 12)
-    simhei_font_b = load_font("simhei.ttf", 16, tkFont.BOLD)
-    msyh_font = load_font("msyh.ttc", 10)
 
     description_text = "本程序用于自动化处理微信号验证。程序启动后，会自动加载配置文件，连接服务器，并定时执行任务。"
     desc_label = Label(root, text=description_text, wraplength=400, justify="left", font=stzhongs_font)
@@ -375,28 +494,38 @@ def process_config_files(config_files):
     return "\n".join(response_messages)
 
 def search_wechat_ids(text_area):
+    global nickname  # 将昵称定义为全局变量
     # 重定向标准输出以捕获WeChat初始化的输出
     old_stdout = sys.stdout
     sys.stdout = mystdout = io.StringIO()
 
     try:
         wx = WeChat()
+        # 每次都提取昵称
+        init_output = mystdout.getvalue()
+        current_nickname = None
+        match = re.search(r"初始化成功，获取到已登录窗口：(.+)", init_output)
+        if match:
+            current_nickname = match.group(1)  # 提取到的当前昵称
+        else:
+            messagebox.showerror("错误", "无法获取微信昵称")
+
+        # 如果当前昵称存在且与之前保存的昵称相同，则不需要重新初始化
+        if current_nickname and current_nickname == nickname:
+            insert_text(text_area, f"专员昵称未变，继续检索: {nickname}")
+        else:
+            # 如果昵称改变，需要重新打开文件传输助手进行初始化
+            if wx.ChatWith('文件传输助手'):
+                nickname = current_nickname
+                insert_text(text_area, f"新初始化，专员昵称为：{nickname}")
+                pyautogui.press('enter')
+            else:
+                messagebox.showerror("错误", "无法初始化微信")
     finally:
         # 恢复标准输出
         sys.stdout = old_stdout
 
-    # 获取初始化输出内容
-    init_output = mystdout.getvalue()
-
-    # 从初始化输出中筛选微信昵称
-    nickname = None
-    match = re.search(r"初始化成功，获取到已登录窗口：(.+)", init_output)
-    if match:
-        nickname = match.group(1)
-        insert_text(text_area, f"正在检索专员微信，昵称为：{nickname}")
-    else:
-        messagebox.showerror("错误", "无法获取微信昵称")
-
+    # 继续进行微信号检索...
     all_results = []
     global result_files
     result_files = []  # 清空之前的记录
@@ -436,7 +565,7 @@ def search_wechat_ids(text_area):
                             code = 1
                         elif who in wechat_id:
                             message = f"查询到微信号包含'{who}'的好友"
-                            code = 4
+                            code = 5
                     elif '昵称:' in chatname:
                         nickname = chatname.replace('<em>', '').replace('</em>', '').split('昵称:')[-1].strip()
                         if nickname == who:
@@ -444,11 +573,11 @@ def search_wechat_ids(text_area):
                             code = 2
                         elif who in nickname:
                             message = f"查询到昵称包含'{who}'的好友"
-                            code = 4
+                            code = 5
                     elif '<em>' in chatname and '</em>' in chatname:
                         nickname_in_group = chatname.replace('<em>', '').replace('</em>', '').split(':')[-1].strip()
                         message = f"查询到群中有昵称'{nickname_in_group}'，但此人不是你的好友"
-                        code = 5
+                        code = 6
                     else:
                         message = f"查询到备注包含'{who}'的好友"
                         code = 4
@@ -470,6 +599,7 @@ def search_wechat_ids(text_area):
             all_results.extend(results)
 
     insert_text(text_area, "所有微信号处理完毕。")
+    pyautogui.hotkey('ctrl', 'alt', 'w')
     pyautogui.press('esc')
 
 def load_wechat_results(filename):
@@ -587,7 +717,7 @@ def run_script():
                 messages.append(result)
 
                 # 筛选 verificationCode 为 1, 2, 3 的 resumeId
-                resume_ids = [data["resumeId"] for data in original_data if data["verificationCode"] in [1, 2, 3]]
+                resume_ids = [data["resumeId"] for data in original_data if data["verificationCode"] in [1, 2, 3, 4]]
                 # print(resume_ids)
                 if resume_ids:
                     right_result = post_right_wechat_data(config, config["userId"], config["token"], resume_ids)
